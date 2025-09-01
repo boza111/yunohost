@@ -894,26 +894,5 @@
     "download_timeout": "{url} took too long to answer, gave up.",
     "download_unknown_error": "Error when downloading data from {url}: {error}",
     "download_bad_status_code": "{url} returned status code {code}"
-    "title_ssh_keys": "SSH Keys",
-    "auth_method": "Authentication Method",
-    "password": "Password",
-    "ssh_key": "SSH Keys",
-    "warning_ssh_keys": "Warning: If you switch to SSH key authentication, you will no longer be able to log in with a password through the SSH terminal. You will still be able to log in with a password to the administrator interface.",
-    "generate_key": "Generate Key (Browser)",
-    "upload_key": "Upload Key",
-    "upload_placeholder": "Drag & drop a key file or pick one",
-    "comment": "Comment",
-    "algorithm": "Algorithm",
-    "fingerprint": "Fingerprint",
-    "actions": "Actions",
-    "copied_clipboard": "Copied to clipboard!",
-    "generated_success": "Key generated successfully!",
-    "title_tools_ssh": "SSH Settings",
-    "root_account": "Root Account",
-    "enabled": "Enabled",
-    "disabled": "Disabled",
-    "root_info": "Root account can be used for SFTP clients or file management.",
-    "root_auth_method": "Root Authentication Method",
-    "warning_root": "Warning: Switching root to SSH keys disables password login for root."
 
 }
