@@ -21,12 +21,14 @@
 import os
 import pwd
 import re
+import subprocess
 from typing import Literal, NotRequired, TypedDict
 
 from .utils.error import YunohostValidationError
 from .utils.file_utils import chmod, chown, mkdir, read_file, write_to_file
 
 SSHD_CONFIG_PATH = "/etc/ssh/sshd_config"
+SSHD_CONFIG_OVERRIDE = "/etc/ssh/sshd_config.d/yunohost.conf"
 
 
 class UserSshInfo(TypedDict):
@@ -35,6 +37,11 @@ class UserSshInfo(TypedDict):
     uid: NotRequired[str]
     mail: str
     homeDirectory: str
+
+
+#
+# User SSH key management
+#
 
 
 def user_ssh_list_keys(username: str) -> dict[Literal["keys"], list[dict[str, str]]]:
@@ -100,6 +107,12 @@ def user_ssh_add_key(username: str, key: str, comment: str | None) -> None:
 
     authorized_keys_content = read_file(authorized_keys_file)
 
+    # --- New: Prevent duplicate key installation ---
+    if key.strip() in authorized_keys_content:
+        raise YunohostValidationError(
+            f"Key already exists for user {username}", raw_msg=True
+        )
+
     authorized_keys_content += "\n"
     authorized_keys_content += "\n"
 
@@ -126,7 +139,7 @@ def user_ssh_remove_key(username: str, key: str) -> None:
 
     if not os.path.exists(authorized_keys_file):
         raise YunohostValidationError(
-            f"this key doesn't exists ({authorized_keys_file} dosesn't exists)",
+            f"this key doesn't exists ({authorized_keys_file} doesn't exist)",
             raw_msg=True,
         )
 
@@ -138,16 +151,83 @@ def user_ssh_remove_key(username: str, key: str) -> None:
         )
 
     # don't delete the previous comment because we can't verify if it's legit
-
-    # this regex approach failed for some reasons and I don't know why :(
-    # authorized_keys_content = re.sub("{} *\n?".format(key),
-    #                                  "",
-    #                                  authorized_keys_content,
-    #                                  flags=re.MULTILINE)
-
     authorized_keys_content = authorized_keys_content.replace(key, "")
 
     write_to_file(authorized_keys_file, authorized_keys_content)
+
+
+#
+# Root/global SSH settings
+#
+
+
+def ssh_root_status() -> dict[str, bool | str]:
+    """
+    Return current root SSH configuration:
+    - PermitRootLogin
+    - AuthMethod ("password" or "keys")
+    """
+    content = read_file(SSHD_CONFIG_PATH) + "\n"
+    if os.path.exists(SSHD_CONFIG_OVERRIDE):
+        content += read_file(SSHD_CONFIG_OVERRIDE) + "\n"
+
+    # Root login
+    root_enabled = not re.search(
+        r"^ *PermitRootLogin +(no|forced-commands-only) *$",
+        content,
+        re.MULTILINE,
+    )
+
+    # Authentication method
+    if re.search(r"^ *PasswordAuthentication +no *$", content, re.MULTILINE):
+        auth_method = "keys"
+    else:
+        auth_method = "password"
+
+    return {
+        "PermitRootLogin": root_enabled,
+        "AuthMethod": auth_method,
+    }
+
+
+def ssh_root_set_enabled(enabled: bool) -> None:
+    """Enable or disable root login via SSH"""
+    _write_override("PermitRootLogin", "yes" if enabled else "no")
+    _reload_sshd()
+
+
+def ssh_root_set_auth_method(method: Literal["password", "keys"]) -> None:
+    """Set SSH authentication method for root"""
+    if method == "keys":
+        _write_override("PasswordAuthentication", "no")
+        _write_override("ChallengeResponseAuthentication", "no")
+    else:
+        _write_override("PasswordAuthentication", "yes")
+        _write_override("ChallengeResponseAuthentication", "yes")
+    _reload_sshd()
+
+
+def _write_override(directive: str, value: str) -> None:
+    """
+    Write or replace a directive in yunohost.conf override file.
+    Ensures idempotency (no duplicate lines).
+    """
+    lines = []
+    if os.path.exists(SSHD_CONFIG_OVERRIDE):
+        lines = read_file(SSHD_CONFIG_OVERRIDE).splitlines()
+
+    # Remove existing occurrences of this directive
+    lines = [l for l in lines if not l.strip().startswith(directive)]
+
+    # Add new value
+    lines.append(f"{directive} {value}")
+
+    write_to_file(SSHD_CONFIG_OVERRIDE, "\n".join(lines) + "\n")
+
+
+def _reload_sshd():
+    """Reload SSH daemon to apply config changes"""
+    subprocess.run(["systemctl", "reload", "ssh"], check=False)
 
 
 #
@@ -158,26 +238,6 @@ def user_ssh_remove_key(username: str, key: str) -> None:
 def _get_user_for_ssh(
     username: str, attrs: list[str] | None = None
 ) -> UserSshInfo | None:
-    def ssh_root_login_status() -> dict[Literal["PermitRootLogin"], bool]:
-        # XXX temporary placed here for when the ssh_root commands are integrated
-        # extracted from https://github.com/YunoHost/yunohost/pull/345
-        # XXX should we support all the options?
-        # this is the content of "man sshd_config"
-        # PermitRootLogin
-        #     Specifies whether root can log in using ssh(1).  The argument must be
-        #     “yes”, “without-password”, “forced-commands-only”, or “no”.  The
-        #     default is “yes”.
-        sshd_config_content = read_file(SSHD_CONFIG_PATH)
-
-        if re.search(
-            "^ *PermitRootLogin +(no|forced-commands-only) *$",
-            sshd_config_content,
-            re.MULTILINE,
-        ):
-            return {"PermitRootLogin": False}
-
-        return {"PermitRootLogin": True}
-
     if username == "root":
         root_unix = pwd.getpwnam("root")
         return {
